@@ -8,7 +8,6 @@ import { ItemBasedCF } from "./lib/item-based.js";
 import { HybridCF } from "./lib/hybrid.js";
 import { SVDRecommender } from "./lib/svd.js";
 import { HybridSVDCF } from "./lib/hybrid-svd.js";
-import { EnsembleSVDRecommender } from "./lib/svd-ensemble.js";
 
 /**
  * Parse training data lines into a structured format.
@@ -121,7 +120,6 @@ async function printPredictedData(testDataLines, predictions, userId) {
         "hybrid",
         "svd",
         "hybrid-svd",
-        "svd-ensemble",
       ].includes(algorithmType)
     ) {
       console.error("Invalid algorithm type");
@@ -159,9 +157,6 @@ async function printPredictedData(testDataLines, predictions, userId) {
         break;
       case "hybrid-svd":
         recommender = new HybridSVDCF();
-        break;
-      case "svd-ensemble":
-        recommender = new EnsembleSVDRecommender();
         break;
       default:
         console.error(`Unknown algorithm: ${algorithmType}`);

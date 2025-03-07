@@ -9,7 +9,6 @@ import { ItemBasedCF } from "../lib/item-based.js";
 import { HybridCF } from "../lib/hybrid.js";
 import { HybridSVDCF } from "../lib/hybrid-svd.js";
 import { SVDRecommender } from "../lib/svd.js";
-import { EnsembleSVDRecommender } from "../lib/svd-ensemble.js";
 
 /**
  * Parse training data lines into a structured format.
@@ -275,7 +274,7 @@ function evaluateAlgorithm(recommender, validationUsers) {
     console.error("Usage: test.js <command> [options]");
     console.error("\nCommands:");
     console.error(
-      "split <test_file> - Split a test file into validation and test sets",
+      "split <test_file> [base_name] - Split a test file into validation and test sets",
     );
     console.error(
       "evaluate <algorithm> <test_file> [validation_file] - Evaluate algorithm on test or validation set",
@@ -293,7 +292,7 @@ function evaluateAlgorithm(recommender, validationUsers) {
       if (args.length < 2) {
         console.error("Usage: test.js split <test_file> [base_name]");
         console.error("\nOptions:");
-        console.error("  base_name - Optional base name for output files");
+        console.error("base_name - Optional base name for output files");
         process.exit(1);
       }
 
@@ -311,12 +310,9 @@ function evaluateAlgorithm(recommender, validationUsers) {
         console.error("user-iuf - User-based CF with inverse user frequency");
         console.error("user-case - User-based CF with case modification");
         console.error("item - Item-based CF with Cosine similarity");
-        console.error("svd - SVD-based recommender");
         console.error("hybrid - Custom hybrid recommendation algorithm");
+        console.error("svd - SVD-based recommender");
         console.error("hybrid-svd - Hybrid recommendation algorithm with SVD");
-        console.error(
-          "ensemble-svd - Ensemble recommendation algorithm with SVD",
-        );
         process.exit(1);
       }
 
@@ -370,17 +366,14 @@ function evaluateAlgorithm(recommender, validationUsers) {
         case "item":
           recommender = new ItemBasedCF();
           break;
-        case "svd":
-          recommender = new SVDRecommender();
-          break;
         case "hybrid":
           recommender = new HybridCF();
           break;
+        case "svd":
+          recommender = new SVDRecommender();
+          break;
         case "hybrid-svd":
           recommender = new HybridSVDCF();
-          break;
-        case "ensemble-svd":
-          recommender = new EnsembleSVDRecommender();
           break;
         default:
           console.error(`Unknown algorithm: ${algorithmType}`);
@@ -465,10 +458,9 @@ function evaluateAlgorithm(recommender, validationUsers) {
         { name: "user-iuf", recommender: new ExtendedUserBasedCF("iuf") },
         { name: "user-case", recommender: new ExtendedUserBasedCF("case") },
         { name: "item", recommender: new ItemBasedCF() },
-        { name: "svd", recommender: new SVDRecommender() },
         { name: "hybrid", recommender: new HybridCF() },
+        { name: "svd", recommender: new SVDRecommender() },
         { name: "hybrid-svd", recommender: new HybridSVDCF() },
-        { name: "ensemble-svd", recommender: new EnsembleSVDRecommender() },
       ];
 
       console.log("Comparing all algorithms...");
