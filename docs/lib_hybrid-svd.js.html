@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: lib/hybrid-svd.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: lib/hybrid-svd.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>import { UserBasedCF } from "./user-based.js";
+import { ItemBasedCF } from "./item-based.js";
+import { SVDRecommender } from "./svd.js";
+
+/**
+ * Enhanced Hybrid Collaborative Filtering algorithm.
+ * Combines multiple recommenders with adaptive weighting and normalization.
+ */
+export class HybridSVDCF {
+  /**
+   * Constructor
+   */
+  constructor() {
+    this.userBasedCF = new UserBasedCF("pearson");
+    this.itemBasedCF = new ItemBasedCF();
+    this.svdRecommender = new SVDRecommender({ features: 50, iterations: 150 });
+
+    this.userRatings = null;
+    this.movieRatings = null;
+
+    this.userMeanRatings = {};
+    this.userRatingStdDev = {};
+    this.moviePopularity = {};
+    this.movieMeanRatings = {};
+
+    this.userNeighborhoods = {};
+    this.movieNeighborhoods = {};
+  }
+
+  /**
+   * Initialize the recommender with training data
+   * @param {Object} userRatings - User ratings data
+   * @param {Object} movieRatings - Movie ratings data
+   */
+  initialize(userRatings, movieRatings) {
+    this.userRatings = userRatings;
+    this.movieRatings = movieRatings;
+
+    this.userBasedCF.initialize(userRatings, movieRatings);
+    this.itemBasedCF.initialize(userRatings, movieRatings);
+    this.svdRecommender.initialize(userRatings, movieRatings);
+
+    for (const userId in this.userRatings) {
+      const ratings = Object.values(this.userRatings[userId]);
+
+      const mean = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
+      this.userMeanRatings[userId] = mean;
+
+      const variance =
+        ratings.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) /
+        ratings.length;
+      this.userRatingStdDev[userId] = Math.sqrt(variance || 0.5);
+    }
+
+    for (const movieId in this.movieRatings) {
+      const ratings = Object.values(this.movieRatings[movieId]);
+
+      this.moviePopularity[movieId] = ratings.length;
+
+      const mean = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
+      this.movieMeanRatings[movieId] = mean;
+    }
+
+    this.computeNeighborhoods();
+  }
+
+  /**
+   * Compute neighborhoods for users and movies to speed up recommendation
+   */
+  computeNeighborhoods() {
+    const sortedUsers = Object.keys(this.userRatings).sort(
+      (a, b) =>
+        Object.keys(this.userRatings[b]).length -
+        Object.keys(this.userRatings[a]).length,
+    );
+
+    const topUsers = sortedUsers.slice(0, Math.ceil(sortedUsers.length * 0.2));
+
+    for (const userId of topUsers) {
+      this.userNeighborhoods[userId] = {};
+
+      for (const otherUserId in this.userRatings) {
+        if (userId !== otherUserId) {
+          const similarity = this.userBasedCF.calculateSimilarity(
+            this.userRatings[userId],
+            this.userRatings[otherUserId],
+            Number(userId),
+            Number(otherUserId),
+          );
+
+          if (similarity > 0) {
+            this.userNeighborhoods[userId][otherUserId] = similarity;
+          }
+        }
+      }
+    }
+
+    const topMovies = Object.keys(this.movieRatings)
+      .sort(
+        (a, b) =>
+          Object.keys(this.movieRatings[b]).length -
+          Object.keys(this.movieRatings[a]).length,
+      )
+      .slice(0, 200);
+
+    for (const movieId of topMovies) {
+      this.movieNeighborhoods[movieId] = {};
+
+      for (const otherMovieId in this.movieRatings) {
+        if (movieId !== otherMovieId) {
+          const similarity = this.itemBasedCF.calculateSimilarity(
+            Number(movieId),
+            Number(otherMovieId),
+          );
+
+          if (similarity > 0) {
+            this.movieNeighborhoods[movieId][otherMovieId] = similarity;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Normalize a user's ratings to account for different rating scales and biases
+   * @param {Object} ratings - User's ratings
+   * @param {number} userId - User ID
+   * @returns {Object} - Normalized ratings
+   */
+  normalizeRatings(ratings, userId) {
+    const normalized = {};
+    const mean = this.userMeanRatings[userId] || 3;
+    const stdDev = this.userRatingStdDev[userId] || 1;
+
+    for (const movieId in ratings) {
+      normalized[movieId] = (ratings[movieId] - mean) / stdDev;
+    }
+
+    return normalized;
+  }
+
+  /**
+   * Analyze the test user's rating pattern to determine the best prediction strategy
+   * @param {Object} knownRatings - Known ratings of the user
+   * @returns {Object} - Analysis results
+   */
+  analyzeUserRatingPattern(knownRatings) {
+    const ratings = Object.values(knownRatings);
+    const mean = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
+    const variance =
+      ratings.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) /
+      ratings.length;
+    const stdDev = Math.sqrt(variance || 0.5);
+
+    const isStrict = mean &lt; 2.75;
+
+    const isGenerous = mean > 3.75;
+
+    const isPolarized = stdDev > 1.5;
+
+    const isNeutral = stdDev &lt; 0.8;
+
+    const ratedMovies = Object.keys(knownRatings);
+    let mainstreamScore = 0;
+
+    for (const movieId of ratedMovies) {
+      mainstreamScore += this.moviePopularity[movieId] || 0;
+    }
+
+    mainstreamScore /= Math.max(1, ratedMovies.length);
+    const hasMainstreamTaste = mainstreamScore > 50;
+
+    return {
+      mean,
+      stdDev,
+      isStrict,
+      isGenerous,
+      isPolarized,
+      isNeutral,
+      hasMainstreamTaste,
+    };
+  }
+
+  /**
+   * Make content-based predictions using similarity to movies the user has already rated
+   * @param {Object} knownRatings - Known ratings of the user
+   * @param {Array&lt;number>} moviesToPredict - Movies to predict
+   * @returns {Object} - Predictions
+   */
+  predictByMovieSimilarity(knownRatings, moviesToPredict) {
+    const predictions = {};
+
+    for (const targetMovieId of moviesToPredict) {
+      let totalSimilarity = 0;
+      let weightedSum = 0;
+
+      for (const ratedMovieId in knownRatings) {
+        const similarity = this.itemBasedCF.calculateSimilarity(
+          parseInt(ratedMovieId),
+          targetMovieId,
+        );
+
+        if (similarity > 0) {
+          weightedSum += similarity * knownRatings[ratedMovieId];
+          totalSimilarity += similarity;
+        }
+      }
+
+      if (totalSimilarity > 0) {
+        predictions[targetMovieId] = weightedSum / totalSimilarity;
+      } else {
+        predictions[targetMovieId] = this.movieMeanRatings[targetMovieId] || 3;
+      }
+    }
+
+    return predictions;
+  }
+
+  /**
+   * Adjust predictions based on user's rating pattern
+   * @param {Object} predictions - Raw predicted ratings
+   * @param {Object} analysis - User rating pattern analysis
+   * @returns {Object} - Adjusted predictions
+   */
+  adjustPredictions(predictions, analysis) {
+    const adjusted = {};
+
+    for (const movieId in predictions) {
+      let prediction = predictions[movieId];
+
+      if (analysis.isStrict &amp;&amp; prediction > 3) {
+        prediction = 3 + (prediction - 3) * 0.8;
+      } else if (analysis.isGenerous &amp;&amp; prediction &lt; 3) {
+        prediction = 3 - (3 - prediction) * 0.8;
+      }
+
+      if (analysis.isPolarized) {
+        if (prediction > 3) {
+          prediction = 3 + (prediction - 3) * 1.2;
+        } else if (prediction &lt; 3) {
+          prediction = 3 - (3 - prediction) * 1.2;
+        }
+      }
+
+      if (analysis.isNeutral) {
+        prediction = 0.7 * prediction + 0.3 * analysis.mean;
+      }
+
+      adjusted[movieId] = Math.max(1, Math.min(5, prediction));
+    }
+
+    return adjusted;
+  }
+
+  /**
+   * Predict movie ratings for a user
+   * @param {number} userId - User ID
+   * @param {Object} knownRatings - Known ratings of the user
+   * @param {Array&lt;number>} moviesToPredict - List of movies to predict
+   * @returns {Object} - Predicted ratings
+   */
+  predict(userId, knownRatings, moviesToPredict) {
+    const userBasedPredictions = this.userBasedCF.predict(
+      userId,
+      knownRatings,
+      moviesToPredict,
+    );
+    const itemBasedPredictions = this.itemBasedCF.predict(
+      userId,
+      knownRatings,
+      moviesToPredict,
+    );
+    const svdPredictions = this.svdRecommender.predict(
+      userId,
+      knownRatings,
+      moviesToPredict,
+    );
+    const similarityPredictions = this.predictByMovieSimilarity(
+      knownRatings,
+      moviesToPredict,
+    );
+
+    const analysis = this.analyzeUserRatingPattern(knownRatings);
+
+    const userAvgRating = analysis.mean;
+
+    let userWeight, itemWeight, svdWeight, similarityWeight;
+
+    const numRatings = Object.keys(knownRatings).length;
+
+    if (numRatings &lt; 10) {
+      userWeight = 0.05;
+      itemWeight = 0.25;
+      svdWeight = 0.5;
+      similarityWeight = 0.2;
+    } else if (analysis.hasMainstreamTaste) {
+      userWeight = 0.1;
+      itemWeight = 0.1;
+      svdWeight = 0.75;
+      similarityWeight = 0.05;
+    } else if (analysis.isPolarized) {
+      userWeight = 0.25;
+      itemWeight = 0.05;
+      svdWeight = 0.5;
+      similarityWeight = 0.2;
+    } else {
+      userWeight = 0.15;
+      itemWeight = 0.15;
+      svdWeight = 0.65;
+      similarityWeight = 0.05;
+    }
+
+    const predictions = {};
+
+    for (const movieId of moviesToPredict) {
+      let combinedRating = 0;
+      let totalWeight = 0;
+
+      const popularity = this.moviePopularity[movieId] || 0;
+      const confidenceWeight = Math.min(1, popularity / 100);
+
+      const components = [
+        { prediction: userBasedPredictions[movieId], weight: userWeight },
+        { prediction: itemBasedPredictions[movieId], weight: itemWeight },
+        { prediction: svdPredictions[movieId], weight: svdWeight },
+        {
+          prediction: similarityPredictions[movieId],
+          weight: similarityWeight,
+        },
+      ];
+
+      for (const component of components) {
+        if (component.prediction !== undefined) {
+          combinedRating += component.prediction * component.weight;
+          totalWeight += component.weight;
+        }
+      }
+
+      if (totalWeight > 0) {
+        combinedRating /= totalWeight;
+
+        const avgMovieRating = this.movieMeanRatings[movieId] || 3;
+        combinedRating =
+          confidenceWeight * combinedRating +
+          (1 - confidenceWeight) * avgMovieRating;
+
+        const globalAverage = 3;
+        const userBias = userAvgRating - globalAverage;
+
+        combinedRating = combinedRating + 0.15 * userBias;
+      } else {
+        combinedRating =
+          (userAvgRating + (this.movieMeanRatings[movieId] || 3)) / 2;
+      }
+
+      predictions[movieId] = Math.max(1, Math.min(5, combinedRating));
+    }
+
+    return this.adjustPredictions(predictions, analysis);
+  }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="ExtendedUserBasedCF.html">ExtendedUserBasedCF</a></li><li><a href="HybridCF.html">HybridCF</a></li><li><a href="HybridSVDCF.html">HybridSVDCF</a></li><li><a href="ItemBasedCF.html">ItemBasedCF</a></li><li><a href="SVDRecommender.html">SVDRecommender</a></li><li><a href="UserBasedCF.html">UserBasedCF</a></li></ul><h3>Global</h3><ul><li><a href="global.html#loadTestData">loadTestData</a></li><li><a href="global.html#loadTrainingData">loadTrainingData</a></li><li><a href="global.html#printPredictedData">printPredictedData</a></li><li><a href="global.html#readFile">readFile</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Wed Feb 26 2025 21:56:52 GMT-0800 (Pacific Standard Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

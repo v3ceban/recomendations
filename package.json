@@ -1,0 +1,24 @@
+{
+  "name": "recommendations",
+  "version": "1.0.0",
+  "description": "Movie Recommendation System",
+  "main": "main.js",
+  "type": "module",
+  "author": "Vladimir Ceban",
+  "license": "GPL-3.0",
+  "scripts": {
+    "docs": "jsdoc main.js lib/*.js -d docs",
+    "readme": "jsdoc2md main.js lib/*.js > README.md",
+    "recommendations": "node main.js",
+    "split": "node test/test.js split",
+    "evaluate": "node test/test.js evaluate",
+    "compare": "node test/test.js compare"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.21.0",
+    "eslint": "^9.21.0",
+    "globals": "^16.0.0",
+    "jsdoc": "^4.0.4",
+    "jsdoc-to-markdown": "^9.1.1"
+  }
+}

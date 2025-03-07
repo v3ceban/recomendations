@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: lib/user-based.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: lib/user-based.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>/**
+ * User-Based Collaborative Filtering recommendation algorithm.
+ * Implements both Cosine similarity and Pearson correlation methods.
+ */
+export class UserBasedCF {
+  /**
+   * Constructor
+   * @param {string} similarityMethod - The similarity method to use ('cosine' or 'pearson')
+   */
+  constructor(similarityMethod = "cosine") {
+    this.similarityMethod = similarityMethod;
+    this.userRatings = null;
+    this.movieRatings = null;
+    this.userAverageRatings = {};
+  }
+
+  /**
+   * Initialize the recommender with training data
+   * @param {Object} userRatings - User ratings data
+   * @param {Object} movieRatings - Movie ratings data
+   */
+  initialize(userRatings, movieRatings) {
+    this.userRatings = userRatings;
+    this.movieRatings = movieRatings;
+
+    if (this.similarityMethod === "pearson") {
+      for (const userId in this.userRatings) {
+        const ratings = Object.values(this.userRatings[userId]);
+        this.userAverageRatings[userId] =
+          ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+      }
+    }
+  }
+
+  /**
+   * Compute cosine similarity between two users.
+   * @param {Object} user1Ratings - Ratings of the first user.
+   * @param {Object} user2Ratings - Ratings of the second user.
+   * @returns {number} - Cosine similarity score.
+   */
+  cosineSimilarity(user1Ratings, user2Ratings) {
+    let dotProduct = 0,
+      normA = 0,
+      normB = 0;
+
+    for (const movie in user1Ratings) {
+      if (movie in user2Ratings) {
+        dotProduct += user1Ratings[movie] * user2Ratings[movie];
+      }
+      normA += Math.pow(user1Ratings[movie], 2);
+    }
+
+    for (const movie in user2Ratings) {
+      normB += Math.pow(user2Ratings[movie], 2);
+    }
+
+    if (normA === 0 || normB === 0) return 0;
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  }
+
+  /**
+   * Compute Pearson correlation between two users.
+   * @param {Object} user1Ratings - Ratings of the first user.
+   * @param {Object} user2Ratings - Ratings of the second user.
+   * @param {number} user1Id - ID of the first user
+   * @param {number} user2Id - ID of the second user
+   * @returns {number} - Pearson correlation coefficient.
+   */
+  pearsonCorrelation(user1Ratings, user2Ratings, user1Id, user2Id) {
+    const commonMovies = Object.keys(user1Ratings).filter(
+      (movie) => movie in user2Ratings,
+    );
+
+    if (commonMovies.length === 0) return 0;
+
+    const user1Avg =
+      this.userAverageRatings[user1Id] ||
+      Object.values(user1Ratings).reduce((sum, r) => sum + r, 0) /
+        Object.values(user1Ratings).length;
+
+    const user2Avg =
+      this.userAverageRatings[user2Id] ||
+      Object.values(user2Ratings).reduce((sum, r) => sum + r, 0) /
+        Object.values(user2Ratings).length;
+
+    let numerator = 0;
+    let denominator1 = 0;
+    let denominator2 = 0;
+
+    for (const movie of commonMovies) {
+      const user1Deviation = user1Ratings[movie] - user1Avg;
+      const user2Deviation = user2Ratings[movie] - user2Avg;
+
+      numerator += user1Deviation * user2Deviation;
+      denominator1 += Math.pow(user1Deviation, 2);
+      denominator2 += Math.pow(user2Deviation, 2);
+    }
+
+    if (denominator1 === 0 || denominator2 === 0) return 0;
+    return numerator / (Math.sqrt(denominator1) * Math.sqrt(denominator2));
+  }
+
+  /**
+   * Calculate similarity between two users using the selected method
+   * @param {Object} user1Ratings - Ratings of the first user
+   * @param {Object} user2Ratings - Ratings of the second user
+   * @param {number} user1Id - ID of the first user
+   * @param {number} user2Id - ID of the second user
+   * @returns {number} - Similarity score
+   */
+  calculateSimilarity(user1Ratings, user2Ratings, user1Id, user2Id) {
+    if (this.similarityMethod === "pearson") {
+      return this.pearsonCorrelation(
+        user1Ratings,
+        user2Ratings,
+        user1Id,
+        user2Id,
+      );
+    } else {
+      return this.cosineSimilarity(user1Ratings, user2Ratings);
+    }
+  }
+
+  /**
+   * Predict movie ratings for a user
+   * @param {number} userId - User ID
+   * @param {Object} knownRatings - Known ratings of the user
+   * @param {Array&lt;number>} moviesToPredict - List of movies to predict
+   * @returns {Object} - Predicted ratings
+   */
+  predict(userId, knownRatings, moviesToPredict) {
+    const similarities = {};
+
+    for (const trainUserId in this.userRatings) {
+      similarities[trainUserId] = this.calculateSimilarity(
+        knownRatings,
+        this.userRatings[trainUserId],
+        userId,
+        Number(trainUserId),
+      );
+    }
+
+    const predictions = {};
+    for (const movieId of moviesToPredict) {
+      let weightedSum = 0;
+      let similaritySum = 0;
+
+      for (const trainUserId in this.userRatings) {
+        if (this.userRatings[trainUserId][movieId]) {
+          const similarity = similarities[trainUserId];
+          if (similarity > 0) {
+            weightedSum += similarity * this.userRatings[trainUserId][movieId];
+            similaritySum += similarity;
+          }
+        }
+      }
+
+      predictions[movieId] =
+        similaritySum > 0
+          ? weightedSum / similaritySum
+          : this.getAverageRating(movieId) || 3;
+    }
+
+    return predictions;
+  }
+
+  /**
+   * Get the average rating for a specific movie
+   * @param {number} movieId - Movie ID
+   * @returns {number} - Average rating or null if not found
+   */
+  getAverageRating(movieId) {
+    if (!this.movieRatings[movieId]) return null;
+
+    const ratings = Object.values(this.movieRatings[movieId]);
+    if (ratings.length === 0) return null;
+
+    return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+  }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="ExtendedUserBasedCF.html">ExtendedUserBasedCF</a></li><li><a href="HybridCF.html">HybridCF</a></li><li><a href="HybridSVDCF.html">HybridSVDCF</a></li><li><a href="ItemBasedCF.html">ItemBasedCF</a></li><li><a href="SVDRecommender.html">SVDRecommender</a></li><li><a href="UserBasedCF.html">UserBasedCF</a></li></ul><h3>Global</h3><ul><li><a href="global.html#loadTestData">loadTestData</a></li><li><a href="global.html#loadTrainingData">loadTrainingData</a></li><li><a href="global.html#printPredictedData">printPredictedData</a></li><li><a href="global.html#readFile">readFile</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Wed Feb 26 2025 21:56:52 GMT-0800 (Pacific Standard Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>

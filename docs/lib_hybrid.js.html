@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>JSDoc: Source: lib/hybrid.js</title>
+
+    <script src="scripts/prettify/prettify.js"> </script>
+    <script src="scripts/prettify/lang-css.js"> </script>
+    <!--[if lt IE 9]>
+      <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+    <link type="text/css" rel="stylesheet" href="styles/prettify-tomorrow.css">
+    <link type="text/css" rel="stylesheet" href="styles/jsdoc-default.css">
+</head>
+
+<body>
+
+<div id="main">
+
+    <h1 class="page-title">Source: lib/hybrid.js</h1>
+
+    
+
+
+
+    
+    <section>
+        <article>
+            <pre class="prettyprint source linenums"><code>import { UserBasedCF } from "./user-based.js";
+import { ItemBasedCF } from "./item-based.js";
+
+/**
+ * Hybrid Collaborative Filtering algorithm.
+ * A custom algorithm that combines user-based and item-based approaches
+ * with additional features for improved recommendation accuracy.
+ */
+export class HybridCF {
+  /**
+   * Constructor
+   */
+  constructor() {
+    this.userRatings = null;
+    this.movieRatings = null;
+    this.userBasedCF = new UserBasedCF("pearson");
+    this.itemBasedCF = new ItemBasedCF();
+    this.moviePopularity = {};
+    this.userMeanRatings = {};
+    this.userRatingStdDev = {};
+  }
+
+  /**
+   * Initialize the recommender with training data
+   * @param {Object} userRatings - User ratings data
+   * @param {Object} movieRatings - Movie ratings data
+   */
+  initialize(userRatings, movieRatings) {
+    this.userRatings = userRatings;
+    this.movieRatings = movieRatings;
+
+    this.userBasedCF.initialize(userRatings, movieRatings);
+    this.itemBasedCF.initialize(userRatings, movieRatings);
+
+    for (const movieId in this.movieRatings) {
+      this.moviePopularity[movieId] = Object.keys(
+        this.movieRatings[movieId],
+      ).length;
+    }
+
+    for (const userId in this.userRatings) {
+      const ratings = Object.values(this.userRatings[userId]);
+
+      const mean = ratings.reduce((sum, r) => sum + r, 0) / ratings.length;
+      this.userMeanRatings[userId] = mean;
+
+      const variance =
+        ratings.reduce((sum, r) => sum + Math.pow(r - mean, 2), 0) /
+        ratings.length;
+      this.userRatingStdDev[userId] = Math.sqrt(variance);
+    }
+  }
+
+  /**
+   * Normalize a user's ratings to account for different rating scales and biases
+   * @param {Object} ratings - User's ratings
+   * @param {number} userId - User ID
+   * @returns {Object} - Normalized ratings
+   */
+  normalizeRatings(ratings, userId) {
+    const normalized = {};
+    const mean = this.userMeanRatings[userId] || 3;
+    const stdDev = this.userRatingStdDev[userId] || 1;
+
+    for (const movieId in ratings) {
+      normalized[movieId] = (ratings[movieId] - mean) / stdDev;
+    }
+
+    return normalized;
+  }
+
+  /**
+   * Denormalize a rating back to the original scale
+   * @param {number} normalizedRating - Normalized rating
+   * @param {number} userId - User ID
+   * @returns {number} - Denormalized rating
+   */
+  denormalizeRating(normalizedRating, userId) {
+    const mean = this.userMeanRatings[userId] || 3;
+    const stdDev = this.userRatingStdDev[userId] || 1;
+    return normalizedRating * stdDev + mean;
+  }
+
+  /**
+   * Calculate confidence weight based on movie popularity
+   * @param {number} movieId - Movie ID
+   * @returns {number} - Confidence weight between 0.5 and 1
+   */
+  getConfidenceWeight(movieId) {
+    const popularity = this.moviePopularity[movieId] || 0;
+    return 0.5 + 0.5 * (1 / (1 + Math.exp(-popularity / 50)));
+  }
+
+  /**
+   * Predict movie ratings for a user
+   * @param {number} userId - User ID
+   * @param {Object} knownRatings - Known ratings of the user
+   * @param {Array&lt;number>} moviesToPredict - List of movies to predict
+   * @returns {Object} - Predicted ratings
+   */
+  predict(userId, knownRatings, moviesToPredict) {
+    const userBasedPredictions = this.userBasedCF.predict(
+      userId,
+      knownRatings,
+      moviesToPredict,
+    );
+    const itemBasedPredictions = this.itemBasedCF.predict(
+      userId,
+      knownRatings,
+      moviesToPredict,
+    );
+
+    const avgUserRating =
+      Object.values(knownRatings).reduce((sum, r) => sum + r, 0) /
+      Math.max(1, Object.values(knownRatings).length);
+
+    const predictions = {};
+
+    for (const movieId of moviesToPredict) {
+      const confidenceWeight = this.getConfidenceWeight(movieId);
+
+      const numRatings = Object.keys(knownRatings).length;
+      let userWeight = Math.min(0.8, numRatings / 20);
+      let itemWeight = 1 - userWeight;
+
+      let combinedRating = 0;
+      let totalWeight = 0;
+
+      if (userBasedPredictions[movieId]) {
+        combinedRating += userWeight * userBasedPredictions[movieId];
+        totalWeight += userWeight;
+      }
+
+      if (itemBasedPredictions[movieId]) {
+        combinedRating += itemWeight * itemBasedPredictions[movieId];
+        totalWeight += itemWeight;
+      }
+
+      if (totalWeight > 0) {
+        combinedRating /= totalWeight;
+      } else {
+        combinedRating = 0.7 * avgUserRating + 0.3 * 3;
+      }
+
+      const avgMovieRating = this.itemBasedCF.getAverageRating(movieId) || 3;
+      combinedRating =
+        confidenceWeight * combinedRating +
+        (1 - confidenceWeight) * avgMovieRating;
+
+      combinedRating = Math.max(1, Math.min(5, combinedRating));
+
+      predictions[movieId] = combinedRating;
+    }
+
+    return predictions;
+  }
+}
+</code></pre>
+        </article>
+    </section>
+
+
+
+
+</div>
+
+<nav>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="ExtendedUserBasedCF.html">ExtendedUserBasedCF</a></li><li><a href="HybridCF.html">HybridCF</a></li><li><a href="HybridSVDCF.html">HybridSVDCF</a></li><li><a href="ItemBasedCF.html">ItemBasedCF</a></li><li><a href="SVDRecommender.html">SVDRecommender</a></li><li><a href="UserBasedCF.html">UserBasedCF</a></li></ul><h3>Global</h3><ul><li><a href="global.html#loadTestData">loadTestData</a></li><li><a href="global.html#loadTrainingData">loadTrainingData</a></li><li><a href="global.html#printPredictedData">printPredictedData</a></li><li><a href="global.html#readFile">readFile</a></li></ul>
+</nav>
+
+<br class="clear">
+
+<footer>
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Wed Feb 26 2025 21:56:52 GMT-0800 (Pacific Standard Time)
+</footer>
+
+<script> prettyPrint(); </script>
+<script src="scripts/linenumber.js"> </script>
+</body>
+</html>
