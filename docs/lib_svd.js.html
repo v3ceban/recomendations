@@ -34,17 +34,17 @@ export class SVDRecommender {
   /**
    * Constructor
    * @param {Object} options - Configuration options
-   * @param {number} options.features - Number of latent features (default: 30)
-   * @param {number} options.iterations - Number of training iterations (default: 100)
-   * @param {number} options.learningRate - Learning rate for gradient descent (default: 0.005)
+   * @param {number} options.features - Number of latent features (default: 50)
+   * @param {number} options.iterations - Number of training iterations (default: 150)
+   * @param {number} options.learningRate - Learning rate for gradient descent (default: 0.01)
    * @param {number} options.regularization - Regularization parameter (default: 0.02)
    * @param {number} options.biasRegularization - Regularization for bias terms (default: 0.005)
    * @param {boolean} options.useImplicitFeedback - Whether to use implicit feedback (default: true)
    */
   constructor(options = {}) {
-    this.features = options.features || 30;
-    this.iterations = options.iterations || 100;
-    this.learningRate = options.learningRate || 0.005;
+    this.features = options.features || 50;
+    this.iterations = options.iterations || 150;
+    this.learningRate = options.learningRate || 0.01;
     this.regularization = options.regularization || 0.02;
     this.biasRegularization = options.biasRegularization || 0.005;
     this.useImplicitFeedback = options.useImplicitFeedback !== false;
@@ -201,6 +201,18 @@ export class SVDRecommender {
   }
 
   /**
+   * Calculate average rating for a specific user or movie
+   * @param {Object} ratings - Ratings object
+   * @returns {number} - Average rating
+   */
+  getAverageRating(ratings) {
+    const values = Object.values(ratings);
+    return values.length > 0
+      ? values.reduce((sum, r) => sum + r, 0) / values.length
+      : this.globalAverage;
+  }
+
+  /**
    * Calculate the dot product of two feature vectors
    * @param {Array} userFeatures - User feature vector
    * @param {Array} movieFeatures - Movie feature vector
@@ -223,23 +235,29 @@ export class SVDRecommender {
    */
   initializeNewUserFeatures(userId, knownRatings) {
     const ratings = Object.values(knownRatings);
+    const numRatings = ratings.length;
+
     const userAvgRating =
-      ratings.length > 0
-        ? ratings.reduce((sum, r) => sum + r, 0) / ratings.length
+      numRatings > 0
+        ? ratings.reduce((sum, r) => sum + r, 0) / numRatings
         : this.globalAverage;
 
-    const userBias = 0.1 * (userAvgRating - this.globalAverage);
+    const userBias =
+      numRatings > 2
+        ? 0.15 * (userAvgRating - this.globalAverage)
+        : 0.05 * (userAvgRating - this.globalAverage);
 
     const avgScale = Math.sqrt(this.globalAverage / this.features);
     const userFeatures = Array(this.features)
       .fill()
-      .map(() => avgScale * (Math.random() * 0.1 + 0.95));
+      .map((_, i) => {
+        const factorScale = avgScale * (1 - 0.3 * (i / this.features));
+        return factorScale * (Math.random() * 0.2 + 0.9);
+      });
 
-    const iterations = Math.min(
-      20,
-      Math.max(10, Object.keys(knownRatings).length),
-    );
-    let learningRate = 0.02;
+    const iterations = Math.min(30, Math.max(15, numRatings * 2));
+
+    let learningRate = 0.025;
 
     let prevError = Number.MAX_VALUE;
 
@@ -247,7 +265,13 @@ export class SVDRecommender {
       let totalError = 0;
       let count = 0;
 
-      for (const movieId in knownRatings) {
+      const movieIds = Object.keys(knownRatings);
+      for (let i = movieIds.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [movieIds[i], movieIds[j]] = [movieIds[j], movieIds[i]];
+      }
+
+      for (const movieId of movieIds) {
         if (this.movieFeatures[movieId]) {
           const actualRating = knownRatings[movieId];
           const movieFeatures = this.movieFeatures[movieId];
@@ -264,11 +288,13 @@ export class SVDRecommender {
           totalError += error * error;
           count++;
 
-          const regTerm = this.regularization / Math.sqrt(ratings.length);
+          const regTerm = this.regularization / Math.pow(numRatings, 0.4);
 
           for (let f = 0; f &lt; this.features; f++) {
+            const featureWeight = 1.0 - 0.2 * (f / this.features);
             userFeatures[f] +=
               learningRate *
+              featureWeight *
               (error * movieFeatures[f] - regTerm * userFeatures[f]);
           }
         }
@@ -276,8 +302,8 @@ export class SVDRecommender {
 
       const iterError = count > 0 ? Math.sqrt(totalError / count) : 0;
 
-      if (iterError >= prevError * 0.99) {
-        learningRate *= 0.8;
+      if (iterError >= prevError * 0.98) {
+        learningRate *= 0.75;
       }
       prevError = iterError;
 
@@ -287,18 +313,6 @@ export class SVDRecommender {
     }
 
     return { features: userFeatures, bias: userBias };
-  }
-
-  /**
-   * Calculate average rating for a specific user or movie
-   * @param {Object} ratings - Ratings object
-   * @returns {number} - Average rating
-   */
-  getAverageRating(ratings) {
-    const values = Object.values(ratings);
-    return values.length > 0
-      ? values.reduce((sum, r) => sum + r, 0) / values.length
-      : this.globalAverage;
   }
 
   /**
@@ -364,13 +378,13 @@ export class SVDRecommender {
 </div>
 
 <nav>
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="ExtendedUserBasedCF.html">ExtendedUserBasedCF</a></li><li><a href="HybridCF.html">HybridCF</a></li><li><a href="HybridSVDCF.html">HybridSVDCF</a></li><li><a href="ItemBasedCF.html">ItemBasedCF</a></li><li><a href="SVDRecommender.html">SVDRecommender</a></li><li><a href="UserBasedCF.html">UserBasedCF</a></li></ul><h3>Global</h3><ul><li><a href="global.html#loadTestData">loadTestData</a></li><li><a href="global.html#loadTrainingData">loadTrainingData</a></li><li><a href="global.html#printPredictedData">printPredictedData</a></li><li><a href="global.html#readFile">readFile</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="ExtendedUserBasedCF.html">ExtendedUserBasedCF</a></li><li><a href="HybridCF.html">HybridCF</a></li><li><a href="HybridSVDCF.html">HybridSVDCF</a></li><li><a href="ItemBasedCF.html">ItemBasedCF</a></li><li><a href="SVDRecommender.html">SVDRecommender</a></li><li><a href="UserBasedCF.html">UserBasedCF</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateMAE">calculateMAE</a></li><li><a href="global.html#calculateRMSE">calculateRMSE</a></li><li><a href="global.html#createValidationSet">createValidationSet</a></li><li><a href="global.html#evaluateAlgorithm">evaluateAlgorithm</a></li><li><a href="global.html#loadTestData">loadTestData</a></li><li><a href="global.html#loadTrainingData">loadTrainingData</a></li><li><a href="global.html#printPredictedData">printPredictedData</a></li><li><a href="global.html#readFile">readFile</a></li><li><a href="global.html#splitTestFile">splitTestFile</a></li></ul>
 </nav>
 
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Wed Feb 26 2025 21:56:52 GMT-0800 (Pacific Standard Time)
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Fri Mar 07 2025 13:59:13 GMT-0800 (Pacific Standard Time)
 </footer>
 
 <script> prettyPrint(); </script>

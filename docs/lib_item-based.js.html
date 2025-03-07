@@ -51,6 +51,20 @@ export class ItemBasedCF {
   }
 
   /**
+   * Get the average rating for a specific movie
+   * @param {number} movieId - Movie ID
+   * @returns {number} - Average rating or 3 if not found
+   */
+  getAverageRating(movieId) {
+    if (!this.movieRatings[movieId]) return 3;
+
+    const ratings = Object.values(this.movieRatings[movieId]);
+    if (ratings.length === 0) return 3;
+
+    return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
+  }
+
+  /**
    * Compute cosine similarity between two movies.
    * @param {Object} movie1Ratings - Ratings of the first movie.
    * @param {Object} movie2Ratings - Ratings of the second movie.
@@ -69,22 +83,19 @@ export class ItemBasedCF {
 
     for (const userId of commonUsers) {
       dotProduct += movie1Ratings[userId] * movie2Ratings[userId];
-    }
-
-    for (const userId in movie1Ratings) {
-      normA += Math.pow(movie1Ratings[userId], 2);
-    }
-
-    for (const userId in movie2Ratings) {
-      normB += Math.pow(movie2Ratings[userId], 2);
+      normA += movie1Ratings[userId] * movie1Ratings[userId];
+      normB += movie2Ratings[userId] * movie2Ratings[userId];
     }
 
     if (normA === 0 || normB === 0) return 0;
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+    const similarity = dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+
+    const shrinkage = 10;
+    return similarity * (commonUsers.length / (commonUsers.length + shrinkage));
   }
 
   /**
-   * Calcuilate similarity between two movies (cached for performance)
+   * Calcuilate similarity between two movies
    * @param {number} movie1Id - First movie ID
    * @param {number} movie2Id - Second movie ID
    * @returns {number} - Similarity score
@@ -114,6 +125,7 @@ export class ItemBasedCF {
    */
   predict(userId, knownRatings, moviesToPredict) {
     const predictions = {};
+    const globalAverage = 3;
 
     for (const targetMovieId of moviesToPredict) {
       let weightedSum = 0;
@@ -126,32 +138,28 @@ export class ItemBasedCF {
         );
 
         if (similarity > 0) {
-          weightedSum += similarity * knownRatings[ratedMovieId];
+          const baseline = this.getAverageRating(parseInt(ratedMovieId));
+          weightedSum += similarity * (knownRatings[ratedMovieId] - baseline);
           similaritySum += similarity;
         }
       }
 
-      predictions[targetMovieId] =
+      const targetBaseline = this.getAverageRating(targetMovieId);
+      let prediction =
         similaritySum > 0
-          ? weightedSum / similaritySum
-          : this.getAverageRating(targetMovieId) || 3;
+          ? targetBaseline + weightedSum / similaritySum
+          : targetBaseline;
+
+      prediction = Math.max(1, Math.min(5, prediction));
+
+      if (prediction &lt;= 0) {
+        prediction = globalAverage;
+      }
+
+      predictions[targetMovieId] = prediction;
     }
 
     return predictions;
-  }
-
-  /**
-   * Get the average rating for a specific movie
-   * @param {number} movieId - Movie ID
-   * @returns {number} - Average rating or null if not found
-   */
-  getAverageRating(movieId) {
-    if (!this.movieRatings[movieId]) return null;
-
-    const ratings = Object.values(this.movieRatings[movieId]);
-    if (ratings.length === 0) return null;
-
-    return ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length;
   }
 }
 </code></pre>
@@ -164,13 +172,13 @@ export class ItemBasedCF {
 </div>
 
 <nav>
-    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="ExtendedUserBasedCF.html">ExtendedUserBasedCF</a></li><li><a href="HybridCF.html">HybridCF</a></li><li><a href="HybridSVDCF.html">HybridSVDCF</a></li><li><a href="ItemBasedCF.html">ItemBasedCF</a></li><li><a href="SVDRecommender.html">SVDRecommender</a></li><li><a href="UserBasedCF.html">UserBasedCF</a></li></ul><h3>Global</h3><ul><li><a href="global.html#loadTestData">loadTestData</a></li><li><a href="global.html#loadTrainingData">loadTrainingData</a></li><li><a href="global.html#printPredictedData">printPredictedData</a></li><li><a href="global.html#readFile">readFile</a></li></ul>
+    <h2><a href="index.html">Home</a></h2><h3>Classes</h3><ul><li><a href="ExtendedUserBasedCF.html">ExtendedUserBasedCF</a></li><li><a href="HybridCF.html">HybridCF</a></li><li><a href="HybridSVDCF.html">HybridSVDCF</a></li><li><a href="ItemBasedCF.html">ItemBasedCF</a></li><li><a href="SVDRecommender.html">SVDRecommender</a></li><li><a href="UserBasedCF.html">UserBasedCF</a></li></ul><h3>Global</h3><ul><li><a href="global.html#calculateMAE">calculateMAE</a></li><li><a href="global.html#calculateRMSE">calculateRMSE</a></li><li><a href="global.html#createValidationSet">createValidationSet</a></li><li><a href="global.html#evaluateAlgorithm">evaluateAlgorithm</a></li><li><a href="global.html#loadTestData">loadTestData</a></li><li><a href="global.html#loadTrainingData">loadTrainingData</a></li><li><a href="global.html#printPredictedData">printPredictedData</a></li><li><a href="global.html#readFile">readFile</a></li><li><a href="global.html#splitTestFile">splitTestFile</a></li></ul>
 </nav>
 
 <br class="clear">
 
 <footer>
-    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Wed Feb 26 2025 21:56:52 GMT-0800 (Pacific Standard Time)
+    Documentation generated by <a href="https://github.com/jsdoc/jsdoc">JSDoc 4.0.4</a> on Fri Mar 07 2025 13:59:13 GMT-0800 (Pacific Standard Time)
 </footer>
 
 <script> prettyPrint(); </script>
